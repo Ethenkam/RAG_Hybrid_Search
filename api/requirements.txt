@@ -1,0 +1,38 @@
+# Core
+fastapi==0.121.1
+uvicorn==0.38.0
+pydantic==2.12.4
+
+# RAG & LangChain
+langchain==1.0.7
+langchain-community==0.4.1
+langchain-core==1.0.4
+langchain-text-splitters==1.0.0
+
+# Embeddings & Vector DB
+sentence-transformers==5.1.2
+faiss-cpu==1.12.0
+
+# Sparse Retrieval
+rank-bm25==0.2.2
+
+# NLP
+nltk==3.9.2
+
+# LLM & Transformers
+transformers==4.57.1
+accelerate  # не указываем версию — пусть ставится совместимая
+
+# Intel XPU
+torch==2.7.0+xpu
+torchaudio==2.7.0+xpu
+torchvision==0.22.0+xpu
+intel_extension_for_pytorch
+
+# API
+mistralai==1.9.11
+
+# Utils
+tqdm==4.67.1
+nest-asyncio==1.6.0
+python-dotenv==1.2.1  # на случай, если решите использовать .env
