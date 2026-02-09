@@ -5,9 +5,15 @@ import threading
 import time
 
 def main():
-    api_key = input("Введите ваш MISTRAL_API_KEY: ").strip()
+    api_key = os.environ.get("MISTRAL_API_KEY")
     if not api_key:
-        print("❌ Ключ не введён. Завершение.")
+        try:
+            api_key = input("Введите ваш MISTRAL_API_KEY: ").strip()
+        except EOFError:
+            pass
+
+    if not api_key:
+        print("❌ Ключ не введён и не найден в переменных окружения. Завершение.")
         sys.exit(1)
 
     os.environ["MISTRAL_API_KEY"] = api_key
