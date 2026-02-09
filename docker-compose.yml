@@ -1,0 +1,22 @@
+services:
+  rag-app:
+    build: .
+    image: intel-rag-search:b580
+    container_name: intel-rag-search
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY}
+      - PYTHONUNBUFFERED=1
+    devices:
+      - /dev/dri:/dev/dri  # Pass-through Intel GPU devices
+    volumes:
+      - ./indexing/documents:/app/indexing/documents
+      - ./faiss_index:/app/faiss_index
+      # Mount api/start.py if you want to modify it without rebuilding, but copying is safer.
+    # Increase shared memory size for PyTorch data loading
+    shm_size: '8gb'
+    ulimits:
+      memlock: -1
+      stack: 67108864

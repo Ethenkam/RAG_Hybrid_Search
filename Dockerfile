@@ -1,52 +1,38 @@
-# Use Ubuntu 24.04 LTS as base image for Intel Arc support
-FROM ubuntu:24.04
+# Use the Intel Extension for PyTorch base image with XPU support
+# This image includes PyTorch, IPEX, and necessary Intel drivers/libraries
+FROM intel/intel-extension-for-pytorch:2.7.10-xpu
 
-# Avoid interactive prompts during build
+# Avoid interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies
+# Install system dependencies that might be missing in the base image
 RUN apt-get update && apt-get install -y \
+    git \
     wget \
     curl \
-    gnupg2 \
-    software-properties-common \
-    git \
-    python3 \
-    python3-pip \
     python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
-# Add Intel GPU repository for Arc drivers
-# Using 'client' component for Intel Arc GPUs on Ubuntu 24.04 (noble)
-RUN wget -qO - https://repositories.intel.com/gpu/intel-graphics.key | gpg --dearmor --output /usr/share/keyrings/intel-graphics.gpg && \
-    echo "deb [arch=amd64,i386 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/ubuntu noble client" | tee /etc/apt/sources.list.d/intel-gpu-noble.list && \
-    apt-get update && apt-get install -y \
-    intel-opencl-icd \
-    intel-level-zero-gpu \
-    level-zero \
-    && rm -rf /var/lib/apt/lists/*
-
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
-ENV WORKDIR=/app
-
+# Set working directory
 WORKDIR /app
 
-# Install Python dependencies
-# We specify extra index URLs for:
-# 1. PyTorch Nightly XPU builds (required for torch 2.7.0+xpu)
-# 2. Intel Extension for PyTorch (stable release channel as fallback)
+# Copy requirements
 COPY api/requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip --break-system-packages && \
-    pip install --no-cache-dir -r requirements.txt --break-system-packages \
-    --extra-index-url https://download.pytorch.org/whl/nightly/xpu \
-    --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/
 
-# Copy the rest of the application
+# Install Python dependencies
+# We filter out torch, torchvision, torchaudio, and intel_extension_for_pytorch
+# to use the pre-installed optimized versions from the base image.
+# If strict version matching fails, pip might try to reinstall torch, so we use
+# --no-deps for the filtered requirements if needed, but here we just remove the lines.
+RUN grep -vE "torch|intel_extension_for_pytorch" requirements.txt > requirements_docker.txt && \
+    pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements_docker.txt
+
+# Copy the application code
 COPY . .
 
-# Expose the port the app runs on
+# Expose the application port
 EXPOSE 8000
 
-# Set the entrypoint to start the application
-ENTRYPOINT ["python3", "api/start.py"]
+# Set the entrypoint
+ENTRYPOINT ["python", "api/start.py"]
