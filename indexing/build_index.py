@@ -48,4 +48,4 @@ def build_and_save_index(data_dir: str, save_path: str = "api\faiss_index"):
     vectorstore.save_local(final_save_path)
     print(f"Индекс сохранён в: {final_save_path}")
 if __name__ == "__main__":
-        build_and_save_index("documents", r"api\faiss_index")
+        build_and_save_index("documents", r"faiss_index")

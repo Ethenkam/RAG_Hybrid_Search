@@ -3,71 +3,101 @@ import sys
 import subprocess
 import threading
 import time
+import shutil
 
 def main():
-    api_key = input("Введите ваш MISTRAL_API_KEY: ").strip()
+    api_key = os.environ.get("MISTRAL_API_KEY")
+    if not api_key:
+        try:
+            api_key = input("Введите ваш MISTRAL_API_KEY: ").strip()
+        except EOFError:
+            pass
+
     if not api_key:
         print("❌ Ключ не введён. Завершение.")
         sys.exit(1)
 
     os.environ["MISTRAL_API_KEY"] = api_key
 
-    from app import app
-    import uvicorn
-    import nest_asyncio
+    # Импорты FastAPI (должны быть установлены)
+    try:
+        from app import app
+        import uvicorn
+        import nest_asyncio
+    except ImportError:
+        print("❌ Ошибка: Не установлены библиотеки. Выполните: pip install fastapi uvicorn nest_asyncio")
+        sys.exit(1)
 
     nest_asyncio.apply()
 
     def run_fastapi():
-        uvicorn.run(app, host="127.0.0.1", port=8000)
+        # log_level="error" чтобы не засорять консоль логами uvicorn
+        uvicorn.run(app, host="127.0.0.1", port=8000, log_level="error")
 
     server_thread = threading.Thread(target=run_fastapi, daemon=True)
     server_thread.start()
 
-    print("⏳ Ожидание запуска сервера...")
-    time.sleep(3)  # чуть больше времени для тяжёлых моделей
+    print("⏳ Ожидание запуска сервера (3 сек)...")
+    time.sleep(3)
 
-    lt_process = None  # ← ИНИЦИАЛИЗИРУЕМ ЗАРАНЕЕ
+    lt_process = None
+
+    # Проверяем, есть ли вообще npx в системе
+    if not shutil.which("npx"):
+        print("❌ Ошибка: 'npx' не найден.")
+        print("👉 Установите Node.js командой: sudo apt install nodejs npm")
 
     try:
         print("🚀 Запуск localtunnel...")
+
+        # ВАЖНО: флаг "-y" автоматически соглашается на установку пакета
+        command = ["npx", "-y", "localtunnel", "--port", "8000"]
+
         lt_process = subprocess.Popen(
-            ["npx", "localtunnel", "--port", "8000"],
+            command,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.PIPE, # Ловим ошибки
             text=True,
-            bufsize=1
+            bufsize=1 # Построчный буфер
         )
 
-        for line in iter(lt_process.stdout.readline, ""):
-            print("lt:", line.strip())
-            if "https://" in line and ".loca.lt" in line:
-                public_url = line.strip().split()[-1]
-                print(f"\n✅ Публичный URL: {public_url}")
-                print("Оставьте это окно открытым для работы туннеля.\n")
+        print("🔍 Ожидание URL...")
+        
+        while True:
+            # Читаем вывод построчно
+            line = lt_process.stdout.readline()
+            if not line and lt_process.poll() is not None:
+                break
+            
+            if line:
+                clean_line = line.strip()
+                # localtunnel иногда выводит мусор, фильтруем
+                if "your url is" in clean_line.lower():
+                    url = clean_line.split("is")[-1].strip()
+                    print(f"\n✅ \033[92mПубличный URL: {url}\033[0m")
+                    print("🌍 (Нажмите Ctrl+C, чтобы остановить сервер)\n")
+                elif "error" in clean_line.lower():
+                    print(f"⚠️ LT Error: {clean_line}")
 
-    except FileNotFoundError:
-        print("⚠️ localtunnel не найден. Установите Node.js и выполните вручную:")
-        print("   npx localtunnel --port 8000")
+            # Если процесс упал, читаем ошибку
+            if lt_process.poll() is not None:
+                err = lt_process.stderr.read()
+                print(f"❌ Localtunnel упал с ошибкой:\n{err}")
+                break
+
     except KeyboardInterrupt:
-        print("\n🛑 Завершение...")
-        sys.exit(0)
+        print("\n🛑 Останавливаем...")
     except Exception as e:
-        print(f"⚠️ Ошибка при запуске localtunnel: {e}")
+        print(f"⚠️ Критическая ошибка: {e}")
 
-    print("FastAPI работает. Нажмите Ctrl+C для выхода.")
-    try:
-        if lt_process:
-            lt_process.wait()  # ← только если запущен
-        else:
-            # Если localtunnel не запущен — просто ждём вручную
-            while True:
-                time.sleep(1)
-    except KeyboardInterrupt:
+    finally:
         if lt_process:
             lt_process.terminate()
-            lt_process.wait()
-        print("\n✅ Сервер остановлен.")
+            try:
+                lt_process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                lt_process.kill()
+        print("👋 Программа завершена.")
 
 if __name__ == "__main__":
     main()
