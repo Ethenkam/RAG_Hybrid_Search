@@ -5,9 +5,9 @@ import threading
 import time
 import shutil
 
-# Добавляем корень проекта в sys.path для корректного импорта
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, project_root)
+# Добавляем директорию api/ в sys.path для корректного импорта app.py
+api_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, api_dir)
 
 def main():
     api_key = os.environ.get("MISTRAL_API_KEY")
