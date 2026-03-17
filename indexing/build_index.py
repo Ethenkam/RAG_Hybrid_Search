@@ -15,10 +15,10 @@ def build_and_save_index(data_dir: str, save_path: str = "api\faiss_index"):
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(script_dir)             
     final_save_path = os.path.join(project_root, save_path)
-    if torch.xpu.is_available():
-        device = "xpu"
-    elif torch.cuda.is_available():
+    if torch.cuda.is_available():
         device = "cuda"
+    elif hasattr(torch, 'xpu') and torch.xpu.is_available():
+        device = "xpu"
     else:
         device = "cpu"
     print(f"Используемое устройство для эмбеддингов: {device}")
@@ -28,7 +28,7 @@ def build_and_save_index(data_dir: str, save_path: str = "api\faiss_index"):
         model_kwargs={"device": device},
         encode_kwargs={"normalize_embeddings": True}
     )
-    
+
     if device == "xpu":
         embeddings.client = embeddings.client.to("xpu")
         print("✅ Эмбеддинг-модель перемещена на XPU")

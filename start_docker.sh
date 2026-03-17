@@ -32,10 +32,14 @@ if ! command -v docker &> /dev/null; then
     exit 1
 fi
 
-echo "🚀 Building and starting the container..."
+# Check for NVIDIA Container Toolkit
+if ! command -v nvidia-smi &> /dev/null; then
+    echo "⚠️  nvidia-smi not found. Make sure NVIDIA drivers are installed."
+    echo "   For NVIDIA Container Toolkit: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html"
+fi
+
+echo "🚀 Building and starting the container (NVIDIA GPU)..."
 check_api_key
 
-# Run docker-compose
-# Pass the environment variable explicitly
+# Run docker-compose with NVIDIA GPU support
 MISTRAL_API_KEY=$MISTRAL_API_KEY docker compose up --build
-

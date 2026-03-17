@@ -21,13 +21,11 @@ nltk==3.9.2
 
 # LLM & Transformers
 transformers==4.57.1
-accelerate  # не указываем версию — пусть ставится совместимая
+accelerate
 
-# Intel XPU
-torch==2.7.0+xpu
-torchaudio==2.7.0+xpu
-torchvision==0.22.0+xpu
-intel_extension_for_pytorch
+# PyTorch (CUDA) — установите вручную под вашу версию CUDA:
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+# Или для CPU: pip install torch torchvision torchaudio
 
 # API
 mistralai==1.9.11
@@ -35,4 +33,4 @@ mistralai==1.9.11
 # Utils
 tqdm==4.67.1
 nest-asyncio==1.6.0
-python-dotenv==1.2.1  # на случай, если решите использовать .env
+python-dotenv==1.2.1

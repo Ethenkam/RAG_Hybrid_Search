@@ -1,5 +1,6 @@
-import intel_extension_for_pytorch as ipex
 from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import List
 import os
@@ -7,8 +8,8 @@ import time
 from mistralai import Mistral
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 import torch
-from langchain_community.embeddings import HuggingFaceEmbeddings 
-from langchain_community.vectorstores import FAISS   
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import FAISS
 import nltk
 import ssl
 from nltk.corpus import stopwords
@@ -16,9 +17,15 @@ from nltk.tokenize import word_tokenize
 import string
 from rank_bm25 import BM25Okapi
 
-
+# Определение устройства: CUDA > XPU > CPU
 print("Загрузка FAISS индекса...")
-device = "xpu" if hasattr(torch, 'xpu') and torch.xpu.is_available() else "cpu"
+if torch.cuda.is_available():
+    device = "cuda"
+elif hasattr(torch, 'xpu') and torch.xpu.is_available():
+    device = "xpu"
+else:
+    device = "cpu"
+print(f"Используемое устройство: {device}")
 embeddings = HuggingFaceEmbeddings(
     model_name="intfloat/multilingual-e5-large",
     model_kwargs={"device": device}
@@ -64,15 +71,20 @@ qwen_model = AutoModelForCausalLM.from_pretrained(
     torch_dtype=torch.bfloat16,
     trust_remote_code=True,
 )
-if device == "xpu":
-    qwen_model = qwen_model.to("xpu")
-    qwen_model = ipex.optimize(qwen_model, dtype=torch.bfloat16)
+if device in ("cuda", "xpu"):
+    qwen_model = qwen_model.to(device)
+    if device == "xpu":
+        try:
+            import intel_extension_for_pytorch as ipex
+            qwen_model = ipex.optimize(qwen_model, dtype=torch.bfloat16)
+        except ImportError:
+            pass
 qwen_pipe = pipeline(
     "text-generation",
     model=qwen_model,
     tokenizer=tokenizer,
     torch_dtype=torch.bfloat16,
-    device=0 if device == "xpu" else -1,  
+    device=0 if device in ("cuda", "xpu") else -1,
     max_new_tokens=128,
     temperature=0.2,
     do_sample=True,
@@ -80,6 +92,22 @@ qwen_pipe = pipeline(
 gost_query_template = "{% if not messages[0]['role'] == 'system' %}<|im_start|>system\n Определи какие ключевые моменты нужно узнать. Сгенерируй ТОЛЬКО  от 3 до 8 поисковых запроса. Формат: каждый запрос с новой строки, без пояснений. Генерируй чётко и кратко Пример: Требования к сварным швам<|im_end|>\n{% endif %}<|im_start|>user\n{{ messages[-1]['content'] }}<|im_end|>\n<|im_start|>assistant\n"
 tokenizer.chat_template = gost_query_template
 app = FastAPI(title="RAG API")
+
+# Serve frontend static files
+frontend_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")
+if os.path.isdir(frontend_dir):
+    app.mount("/static", StaticFiles(directory=frontend_dir), name="static")
+
+@app.get("/")
+async def serve_frontend():
+    index_path = os.path.join(frontend_dir, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    return {"message": "Frontend not found. API is running at /docs"}
+
+@app.get("/health")
+async def health():
+    return {"status": "ok", "device": device}
 def extract_search_queries(generated_text):
   
     if "<|im_start|>assistant" in generated_text:
@@ -105,9 +133,10 @@ def extract_search_queries(generated_text):
     
     return search_queries
 
-def answer_question(user_query: str) -> str:
+def answer_question(user_query: str) -> dict:
     print(f"\n🔍 Начало обработки запроса: '{user_query}'", flush=True)
     start_time = time.time()
+    timings = {}
 
     # === Этап 1: Генерация поисковых запросов ===
     print("⚙️ Этап 1/4: Генерация поисковых запросов через Qwen...", flush=True)
@@ -118,52 +147,49 @@ def answer_question(user_query: str) -> str:
     )
     gen_start = time.time()
     outputs = qwen_pipe(prompt)
-    gen_time = time.time() - gen_start
+    timings["query_expansion"] = round(time.time() - gen_start, 2)
     raw_output = outputs[0]["generated_text"]
     search_queries = extract_search_queries(raw_output)
     if not search_queries:
         search_queries = [user_query]
-    print(f"✅ Сгенерировано {len(search_queries)} запрос(ов): {search_queries} (за {gen_time:.1f}с)", flush=True)
-    
-    # === Этап 2: Hybrid Dense + Sparse поиск по каждому сгенерированному запросу ===
+    print(f"✅ Сгенерировано {len(search_queries)} запрос(ов): {search_queries} (за {timings['query_expansion']}с)", flush=True)
+
+    # === Этап 2: Hybrid Dense + Sparse поиск ===
     print("⚙️ Этап 2/4: Hybrid Dense + Sparse поиск...", flush=True)
+    search_start = time.time()
     hybrid_docs = []
     for q in search_queries:
-        print(f"  Обработка подзапроса: '{q}'", flush=True)
-        
-        # Dense: FAISS
         dense_results = vectorstore.similarity_search(q, k=5)
-        # Sparse: BM25
         tokenized_q = preprocess(q)
         bm25_scores = bm25.get_scores(tokenized_q)
-        top_n_sparse = 5
-        top_indices = bm25_scores.argsort()[-top_n_sparse:][::-1]
+        top_indices = bm25_scores.argsort()[-5:][::-1]
         sparse_results = [all_docs[i] for i in top_indices]
-        # Объединяем и дедуплицируем
         combined = dense_results + sparse_results
         seen = set()
-        unique_for_query = []
         for doc in combined:
             if doc.page_content not in seen:
                 seen.add(doc.page_content)
-                unique_for_query.append(doc)
-        hybrid_docs.extend(unique_for_query)
-    # Глобальная дедупликация по всему результату
+                hybrid_docs.append(doc)
     seen_global = set()
     final_docs = []
     for doc in hybrid_docs:
         if doc.page_content not in seen_global:
             seen_global.add(doc.page_content)
             final_docs.append(doc)
+    timings["hybrid_search"] = round(time.time() - search_start, 2)
     print(f"✅ Hybrid поиск: {len(final_docs)} уникальных фрагментов", flush=True)
+
+    sources = []
     query_context_pairs = []
     for doc in final_docs:
         truncated = doc.page_content[:1000]
         query_context_pairs.append(("", truncated))
-
+        sources.append({
+            "content": truncated[:200] + "..." if len(truncated) > 200 else truncated,
+            "metadata": doc.metadata if doc.metadata else {}
+        })
 
     # === Этап 3: Формирование промпта ===
-    print("⚙️ Этап 3/4: Формирование финального промпта для Mistral...", flush=True)
     prompt_parts = [
         "Ты помощник, отвечающий строго по контексту.",
         "Если части ответов не найдено — скажи 'Точный ответ на данный вопрос не найден в предоставленных документах'.\n"
@@ -172,15 +198,12 @@ def answer_question(user_query: str) -> str:
         prompt_parts.append(f"Документ {i}:\n[Фрагмент]\n{ctx}\n")
     prompt_parts.append(f"На основе всего приведённого контекста дай один чёткий и полный ответ на исходный вопрос пользователя: '{user_query}'. Не перечисляй ответы на промежуточные запросы.")
     full_instruction = "\n".join(prompt_parts)
-    print("✅ Промпт для Mistral сформирован", flush=True)
 
     # === Этап 4: Вызов Mistral ===
     print("⚙️ Этап 4/4: Отправка запроса в Mistral API...", flush=True)
     api_key = os.getenv("MISTRAL_API_KEY")
     if not api_key:
-        error_msg = "❌ Ошибка: MISTRAL_API_KEY не установлен"
-        print(error_msg, flush=True)
-        return error_msg
+        return {"answer": "Ошибка: MISTRAL_API_KEY не установлен", "error": True}
 
     client = Mistral(api_key=api_key)
     try:
@@ -190,38 +213,51 @@ def answer_question(user_query: str) -> str:
             messages=[{"role": "user", "content": full_instruction}]
         )
         answer = chat_response.choices[0].message.content
-        mistral_time = time.time() - mistral_start
-        total_time = time.time() - start_time
-        print(f"✅ Ответ получен от Mistral (за {mistral_time:.1f}с)", flush=True)
-        print(f"⏱️ Общее время обработки: {total_time:.1f} секунд", flush=True)
-        return answer
+        timings["mistral"] = round(time.time() - mistral_start, 2)
+        timings["total"] = round(time.time() - start_time, 2)
+        print(f"✅ Ответ получен от Mistral (за {timings['mistral']}с)", flush=True)
+        print(f"⏱️ Общее время обработки: {timings['total']} секунд", flush=True)
+        return {
+            "answer": answer,
+            "search_queries": search_queries,
+            "num_sources": len(final_docs),
+            "sources": sources[:10],
+            "timings": timings,
+            "device": device
+        }
     except Exception as e:
-        error_msg = f"❌ Ошибка при вызове Mistral: {str(e)}"
-        print(error_msg, flush=True)
-def answer_question_without_rag(user_query: str) -> str:
+        return {"answer": f"Ошибка при вызове Mistral: {str(e)}", "error": True}
+def answer_question_without_rag(user_query: str) -> dict:
     api_key = os.getenv("MISTRAL_API_KEY")
     if not api_key:
-        return "Ошибка: MISTRAL_API_KEY не установлен"
+        return {"answer": "Ошибка: MISTRAL_API_KEY не установлен", "error": True}
     client = Mistral(api_key=api_key)
     try:
+        start_time = time.time()
         chat_response = client.chat.complete(
             model="mistral-large-latest",
             messages=[{"role": "user", "content": user_query}]
         )
-        return chat_response.choices[0].message.content
+        total_time = round(time.time() - start_time, 2)
+        return {
+            "answer": chat_response.choices[0].message.content,
+            "timings": {"mistral": total_time, "total": total_time},
+            "device": device
+        }
     except Exception as e:
-        return f"Ошибка: {str(e)}"       
+        return {"answer": f"Ошибка: {str(e)}", "error": True}
+
 class QuestionRequest(BaseModel):
     question: str
-    use_rag: bool = True  # по умолчанию — с RAG
+    use_rag: bool = True
 
 @app.post("/ask")
 async def ask(request: QuestionRequest):
     try:
         if request.use_rag:
-            answer = answer_question(request.question)  # ← RAG-версия
+            result = answer_question(request.question)
         else:
-            answer = answer_question_without_rag(request.question)  # ← прямой Mistral
-        return {"answer": answer}
+            result = answer_question_without_rag(request.question)
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
