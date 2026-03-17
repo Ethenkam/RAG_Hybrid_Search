@@ -5,6 +5,10 @@ import threading
 import time
 import shutil
 
+# Добавляем корень проекта в sys.path для корректного импорта
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, project_root)
+
 def main():
     api_key = os.environ.get("MISTRAL_API_KEY")
     if not api_key:
@@ -21,7 +25,7 @@ def main():
 
     # Импорты FastAPI (должны быть установлены)
     try:
-        from api.app import app
+        from app import app
         import uvicorn
         import nest_asyncio
     except ImportError:
