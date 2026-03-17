@@ -21,7 +21,7 @@ def main():
 
     # Импорты FastAPI (должны быть установлены)
     try:
-        from app import app
+        from api.app import app
         import uvicorn
         import nest_asyncio
     except ImportError:

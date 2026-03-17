@@ -30,7 +30,8 @@ embeddings = HuggingFaceEmbeddings(
     model_name="intfloat/multilingual-e5-large",
     model_kwargs={"device": device}
 )
-vectorstore = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
+faiss_index_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "faiss_index")
+vectorstore = FAISS.load_local(faiss_index_path, embeddings, allow_dangerous_deserialization=True)
 # === Инициализация BM25 для sparse retrieval ===
 print("Подготовка BM25 индекса...")
 try:
