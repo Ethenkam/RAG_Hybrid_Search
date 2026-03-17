@@ -32,7 +32,9 @@ def main():
 
     def run_fastapi():
         # log_level="error" чтобы не засорять консоль логами uvicorn
-        uvicorn.run(app, host="127.0.0.1", port=8000, log_level="error")
+        host = os.environ.get("HOST", "0.0.0.0")
+        port = int(os.environ.get("PORT", "8000"))
+        uvicorn.run(app, host=host, port=port, log_level="error")
 
     server_thread = threading.Thread(target=run_fastapi, daemon=True)
     server_thread.start()
