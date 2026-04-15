@@ -1,111 +1,172 @@
-# Hybrid RAG Search System with Intel XPU Support
+# Hybrid RAG Search System
 
-Этот проект реализует **гибридную RAG-систему** для поиска документации с поддержкой **Intel Arc GPU** через Intel Extension for PyTorch (IPEX). Система автоматически расширяет пользовательский запрос, ищет информацию в локальной базе и генерирует точный ответ с источниками.
+A **hybrid Retrieval-Augmented Generation (RAG)** system for document search with support for **Intel Arc GPU** (via IPEX) and **NVIDIA GPU** (via CUDA). The system automatically expands user queries, retrieves relevant context from a local knowledge base, and generates precise answers with source references.
 
-> Особенность: полная локальная инференс-цепочка (Qwen 3-4B) + облачный финальный ответ (Mistral), оптимизированная под русскоязычный технический домен.
-
----
-
-## Как это работает?
-
-1. **Пользователь задаёт вопрос**.
-2. **Qwen 3-4B-Instruct** генерирует 3–8 уточняющих поисковых запросов.
-3. Для каждого запроса выполняется **гибридный поиск**:
-   - **Dense retrieval**: FAISS с эмбеддингами `intfloat/multilingual-e5-large`
-   - **Sparse retrieval**: BM25 с токенизацией и стоп-словами для русского языка
-4. Результаты объединяются и дедуплицируются.
-5. **Mistral Large** формирует финальный ответ на основе собранного контекста.
+> **Key design choice:** a fully local inference chain (Qwen3-4B) for query expansion + cloud-based final answer generation (Mistral), optimized for Russian-language technical documentation.
 
 ---
 
-## Основные возможности
+## How It Works
 
-- **Гибридный поиск**: BM25 + FAISS с дедупликацией
-- **Query Expansion**: через локальную модель **Qwen/Qwen3-4B-Instruct-2507**
-- **Поддержка Intel XPU**: ускорение эмбеддингов и Qwen через `intel_extension_for_pytorch`
-- **Работа с русским языком**: стоп-слова, токенизация, очистка от артефактов («Страница 5» и т.п.)
-- **Гибкая загрузка документов**: поддержка UTF-8 и cp1251, рекурсивный обход папок
-- **FastAPI-сервер** с эндпоинтом `/ask`
-- **Публичный URL** через `localtunnel` (для демонстрации)
-- **Режим без RAG**: прямой запрос к Mistral (для сравнения)
+1. **User submits a question.**
+2. **Qwen3-4B-Instruct** generates 3–8 refined search sub-queries.
+3. For each sub-query, **hybrid search** is performed:
+   - **Dense retrieval** — FAISS vector index with `intfloat/multilingual-e5-large` embeddings
+   - **Sparse retrieval** — BM25 with Russian-language tokenization and stopwords
+4. Results are merged and deduplicated via Reciprocal Rank Fusion.
+5. **Mistral Large** synthesizes the final answer from the collected context.
 
+---
 
-## Установка и запуск
+## Features
 
-### Требования
+- **Hybrid search** — BM25 + FAISS with deduplication
+- **Query expansion** — via local **Qwen/Qwen3-4B-Instruct** model
+- **Intel XPU support** — embedding and Qwen acceleration via `intel_extension_for_pytorch`
+- **NVIDIA GPU support** — CUDA acceleration for embeddings and Qwen inference
+- **Russian-language processing** — stopwords, tokenization, artifact removal (e.g. "Page 5")
+- **Flexible document loader** — UTF-8 and CP1251 encoding support, recursive folder traversal
+- **FastAPI backend** — `/ask` endpoint with `use_rag` toggle
+- **Demo frontend** — built-in web UI for interactive testing
+- **Public tunnel** via `localtunnel` for demos
+- **No-RAG mode** — direct Mistral query for comparison
+
+---
+
+## Installation & Setup
+
+### Requirements
+
 - Python 3.12+
-- Intel GPU (Arc) с драйверами + IPEX (или CPU)
-- Node.js (для localtunnel)
-- Mistral API Key ([получить здесь](https://console.mistral.ai/))
+- One of:
+  - Intel Arc GPU with drivers + IPEX, **or**
+  - NVIDIA GPU with CUDA 11.8+, **or**
+  - CPU (slower, supported)
+- Node.js (for localtunnel)
+- Mistral API Key — [get one here](https://console.mistral.ai/)
 
-### 1. Установите зависимости
+### 1. Install dependencies
+
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Подготовьте документы
-Поместите текстовые файлы (`.txt`) в папку:
+> For NVIDIA GPU, make sure you have the CUDA-compatible version of PyTorch installed:
+> ```bash
+> pip install torch --index-url https://download.pytorch.org/whl/cu118
+> ```
+
+### 2. Prepare documents
+
+Place your `.txt` files into:
+
 ```
 indexing/documents/
 ```
-Поддерживаются кодировки: **UTF-8** и **Windows-1251**.
 
-### 3. Создайте индекс
+Supported encodings: **UTF-8** and **Windows-1251**.
+
+### 3. Build the index
+
 ```bash
 python indexing/build_index.py
 ```
-→ Будет создано:
-- `faiss_index/` — векторный индекс
-- BM25 — загружается при запуске API
 
-> На Intel XPU эмбеддинги генерируются с ускорением через `xpu`.
+This creates:
 
-### 4. Запустите API
+- `faiss_index/` — vector index
+- BM25 corpus — loaded at API startup
+
+> On **Intel XPU**, embeddings are accelerated via `xpu`.  
+> On **NVIDIA GPU**, the system automatically uses `cuda`.  
+> Falls back to `cpu` if no GPU is available.
+
+### 4. Start the API
+
 ```bash
 python api/start.py
 ```
-Скрипт запросит `MISTRAL_API_KEY` и запустит:
-- FastAPI сервер на `http://localhost:8000`
-- Публичный туннель через `localtunnel`
 
-> **Если `localtunnel` не установлен**, скрипт покажет инструкцию.  
-> Вручную вы можете запустить туннель в отдельном терминале:
+You'll be prompted for your `MISTRAL_API_KEY`. The script then starts:
+
+- FastAPI server at `http://localhost:8000`
+- Public tunnel via `localtunnel`
+
+> If `localtunnel` is not installed, the script will show instructions.  
+> You can also start the tunnel manually:
 > ```bash
 > npx localtunnel --port 8000
 > ```
-> (требуется Node.js)
 
-Пример вывода:
+Sample output:
+
 ```
-Публичный URL: https://abc123.loca.lt
+Public URL: https://abc123.loca.lt
 ```
 
+### 5. Use the demo frontend
 
-### 5. Отправьте запрос
+Open `http://localhost:8000` in your browser to access the built-in web UI. Enter your question, toggle RAG mode, and see results with source references in real time.
+
+### 6. Or query via API directly
+
 ```bash
 curl -X POST https://abc123.loca.lt/ask \
   -H "Content-Type: application/json" \
-  -d '{"question": "Какие требования к смазке подшипников?", "use_rag": true}'
+  -d '{"question": "What are the bearing lubrication requirements?", "use_rag": true}'
 ```
 
-> Параметр `use_rag: false` — для прямого запроса к Mistral (без RAG).
+> Set `"use_rag": false` to query Mistral directly without retrieval (useful for comparison).
 
 ---
 
-## Технические детали
+## Technical Details
 
-### Поддержка Intel XPU
-- Эмбеддинги: `HuggingFaceEmbeddings(..., device="xpu")`
-- Qwen: `model.to("xpu")` + `ipex.optimize()`
-- Автоматическое определение устройства: `torch.xpu.is_available()`
+### GPU Support
 
-### Обработка текста
-- Удаление управляющих символов
-- Очистка от строк вида «Страница 5»
-- Рекурсивный чанкинг с `separators=["\n\n", "\n", " ", ". ", ""]`
-- Поддержка русских стоп-слов и пунктуации
+| Device | How it's activated |
+|---|---|
+| Intel Arc (XPU) | `torch.xpu.is_available()` → `device="xpu"` + `ipex.optimize()` |
+| NVIDIA (CUDA) | `torch.cuda.is_available()` → `device="cuda"` |
+| CPU fallback | automatic if no GPU detected |
 
-### Безопасность
-- API-ключ **не сохраняется** — вводится при запуске
-- Индекс и документы **не коммитятся** в репозиторий
+Embeddings and Qwen inference both respect the detected device automatically.
+
+### Text Processing
+
+- Control character removal
+- Artifact cleanup (lines like "Page 5", headers/footers)
+- Recursive chunking with `separators=["\n\n", "\n", " ", ". ", ""]`
+- Russian stopwords and punctuation handling
+
+### Security
+
+- API key is **never stored** — entered at runtime only
+- Index and documents are **not committed** to the repository
+
 ---
+
+## Project Structure
+
+```
+RAG_Hybrid_Search/
+├── api/                  # FastAPI app + demo frontend
+├── data_loader/          # Document loading & preprocessing
+├── indexing/             # FAISS index builder + BM25
+├── Dockerfile
+├── docker-compose.yml
+├── start_docker.sh
+└── DOCKER_README.md
+```
+
+---
+
+## Docker
+
+See [DOCKER_README.md](./DOCKER_README.md) for containerized deployment instructions.
+
+---
+
+## License
+
+[MIT](./LICENSE)
